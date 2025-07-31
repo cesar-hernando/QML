@@ -6,4 +6,4 @@ This repository contains the implementation of two QML methods: Quantum Support 
 
 - QCBM:
 
-- BO applied to hyperparameter tuning of SQA:
+- BO applied to hyperparameter tuning of SQA: Information in the BO-SQA folder's README.
