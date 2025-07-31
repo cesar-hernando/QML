@@ -308,19 +308,19 @@ class BayesianOptimizer:
         self.dim = len(bounds)
         self.xi = xi
         self.kernel = kernel if kernel else Matern(nu=2.5)
-        self.model = GaussianProcessRegressor(kernel=self.kernel, alpha=1e-6, normalize_y=True)
+        self.model = GaussianProcessRegressor(kernel=self.kernel, alpha=1e-3, normalize_y=True)
 
         # Initialize with random samples
-        self.X_sample = self._random_sample(n_init)
-        self.Y_sample = self._evaluate(self.X_sample)
+        self.X_sample = self.random_sample(n_init)
+        self.Y_sample = self.evaluate(self.X_sample)
 
-    def _random_sample(self, n):
+    def random_sample(self, n):
         return np.random.uniform(self.bounds[:, 0], self.bounds[:, 1], size=(n, self.dim))
 
-    def _evaluate(self, X):
+    def evaluate(self, X):
         return np.array([self.func(x) for x in X]).reshape(-1, 1)
 
-    def _expected_improvement(self, X):
+    def expected_improvement(self, X):
         mu, sigma = self.model.predict(X, return_std=True)
         mu_sample_opt = np.min(self.Y_sample)
         with np.errstate(divide='warn'):
@@ -331,14 +331,14 @@ class BayesianOptimizer:
         return ei
     
     def suggest(self, n_candidates=1000):
-        X_grid = self._random_sample(n_candidates)
-        ei = self._expected_improvement(X_grid)
+        X_grid = self.random_sample(n_candidates)
+        ei = self.expected_improvement(X_grid)
         return X_grid[np.argmax(ei)]
 
     def step(self):
         self.model.fit(self.X_sample, self.Y_sample)
         x_next = self.suggest().reshape(1, -1)
-        y_next = self._evaluate(x_next)
+        y_next = self.evaluate(x_next)
         self.X_sample = np.vstack((self.X_sample, x_next))
         self.Y_sample = np.vstack((self.Y_sample, y_next))
         return x_next.squeeze(), y_next.item()
