@@ -289,7 +289,7 @@ class BayesianOptimizer:
     def __init__(self, sqa, bounds, n_init=5, kernel=None, xi=0.01, seed=42):
         """
         Parameters:
-            func : class
+            sqa : class
                 Contains the black-box function to optimize.
             bounds : list of tuples
                 Bounds for each dimension [(min, max), ...].
@@ -330,8 +330,6 @@ class BayesianOptimizer:
             ei[sigma == 0.0] = 0.0
         return ei
     
-    
-
     def suggest(self, n_candidates=1000):
         X_grid = self._random_sample(n_candidates)
         ei = self._expected_improvement(X_grid)
