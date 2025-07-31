@@ -162,7 +162,8 @@ class QCBM:
 
         if ansatz_mode == 0:
             self.n_params = 3*n_qubits*n_blocks
-        else:
+
+        else: # A different ansatz could be implemented
             pass
 
     def ansatz(self, params):
@@ -459,7 +460,7 @@ class QCBM:
             'fidelity': fidelity,
             'rate': rate,
             'coverage': coverage,
-            'cost': cost
+            'average cost': cost
         }
 
         return metrics
