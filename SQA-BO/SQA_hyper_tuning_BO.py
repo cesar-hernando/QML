@@ -5,6 +5,7 @@ In this file we implement the SQA algorithm
 # Import general use libraries
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import minimize
 import random
 import time
 import networkx as nx
@@ -330,10 +331,32 @@ class BayesianOptimizer:
             ei[sigma == 0.0] = 0.0
         return ei
     
-    def suggest(self, n_candidates=1000):
-        X_grid = self.random_sample(n_candidates)
-        ei = self.expected_improvement(X_grid)
-        return X_grid[np.argmax(ei)]
+    def suggest(self, n_candidates=1000, n_restarts=10, mode=1):
+
+        def min_obj(x):
+                x = np.atleast_2d(x)
+                return -self.expected_improvement(x)
+
+        if mode == 0: # random search
+            X_grid = self.random_sample(n_candidates)
+            ei = self.expected_improvement(X_grid)
+            return X_grid[np.argmax(ei)]
+        else:
+            best_x = None
+            best_ei = -np.inf
+
+            for _ in range(n_restarts):
+                x0 = self.random_sample(1).flatten()  # random initial point
+                res = minimize(min_obj, x0=x0, bounds=self.bounds, method="L-BFGS-B")
+
+                if res.success:
+                    ei_val = -res.fun  # remember we minimized the negative
+                    if ei_val > best_ei:
+                        best_ei = ei_val
+                        best_x = res.x
+
+            return best_x
+        
 
     def step(self):
         self.model.fit(self.X_sample, self.Y_sample)
