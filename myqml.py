@@ -27,6 +27,37 @@ from qat.qpus import get_default_qpu
 #############################################################
 
 class QSVM(SVC):
+
+    '''
+    Class to solve a Supervised Machine Learning binary classification problem using the 
+    Quantum Support Vector Machine (QSVM) algorithm. It defines the qkernel method which 
+    is used as input of the SVC class (parent class) of scikit-learn that implements a 
+    classical SVM algorithm. Thus, all the quantumness is embedded in the definition of 
+    the kernel.
+
+    Parameters:
+    ----------
+    n_qubits (int): 
+        Number of qubits used for the quantum circuit, which must be equal to the number of features of the dataset
+
+    device (str): 
+        Indicates whether the quantum circuits are executed locally (myQLM) or sent to a Qaptiva emulator as batches.
+
+    kernel_circuit_label (str): 
+        Encoding type for the kernel circuit. Can be either 'angle_encoding', 'zz_encoding' or None if a custom_kernel is used.
+
+    angle_encoding_type (str): 
+        Axis of rotation employed for the rotation gates of the quantum circuit ('x', 'y' or 'z'), if 'angle_encoding' is utilized. It can be None is 'zz_encoding' is selected.
+    
+    n_shots (int):
+        Number of executions of each quantum circuit to estimate the probability of measuring all qubits in state 0. If n_shots is not indicated, the probability is calculated
+        exactly (with state vector simulation) without shot noise.   
+
+    custom_kernel (function): 
+        Given two input vectors, the function must create a kernel circuit and return an obbject of the class Program.
+
+    '''
+
     def __init__(self, n_qubits, device='Qaptiva', kernel_circuit_label='angle_encoding', angle_encoding_type='x', n_shots = None, custom_kernel=None):
         
         self.n_qubits = n_qubits
@@ -48,95 +79,125 @@ class QSVM(SVC):
 
 
     def kernel_circuit(self, a, b):
-            '''
-            Build the quantum kernel circuit based on the specified label
-            '''
+        '''
+        Given two input vectors (samples of the dataset), this method creates a quantum circuit to implement the kernel specified 
+        by the attributes **kernel_circuit_label** and **angle_encoding_type**  and returns the probability of measuring all qubits in state 0.
+
+        Parameters:
+        -----------
+        a (np.ndarray): 
+            Input vector of length n_qubits that is used as input angles of the rotation gates applied to each qubit in the feature map.
+        b (np.ndarray): 
+            Input vector of length n_qubits that is used as input angles of the rotation gates applied to each qubit in the inverse feature map.
+
+        Returns: 
+        --------
+        probability_all_zeros (float):
+            The probability of measuring all qubits in zero.
+
+        '''
             
-            # Create a quantum program with the specified number of qubits
-            qprogram = Program()
-            qubits = qprogram.qalloc(self.n_qubits)
+        # Create a quantum program with the specified number of qubits
+        qprogram = Program()
+        qubits = qprogram.qalloc(self.n_qubits)
 
-            if self.kernel_circuit_label == 'angle_encoding':
+        if self.kernel_circuit_label == 'angle_encoding':
 
-                # Feature map for first input vector a
-                for i, qubit in enumerate(qubits):
-                    if self.angle_encoding_type == 'x':
-                        qprogram.apply(RX(a[i]), qubit)
-                    elif self.angle_encoding_type == 'y':
-                        qprogram.apply(RY(a[i]), qubit)
-                    elif self.angle_encoding_type == 'z':
-                        qprogram.apply(H, qubit)
-                        qprogram.apply(RZ(a[i]), qubit)
-                    else:
-                        raise ValueError(f'Unknown angle encoding type: {self.angle_encoding_type}')
-                    
-                # Inverse feature map for second input vector b
-                for i, qubit in enumerate(qubits):
-                    if self.angle_encoding_type.lower() == 'x':
-                        qprogram.apply(RX(-b[i]), qubit)
-                    elif self.angle_encoding_type.lower() == 'y':
-                        qprogram.apply(RY(-b[i]), qubit)
-                    elif self.angle_encoding_type.lower() == 'z':
-                        qprogram.apply(RZ(-b[i]), qubit)
-                        qprogram.apply(H, qubit)
-
-
-            elif self.kernel_circuit_label == 'zz_encoding':
-
-                # Feature map for first input vector a
-                for i, qubit in enumerate(qubits):
+            # Feature map for first input vector a
+            for i, qubit in enumerate(qubits):
+                if self.angle_encoding_type == 'x':
+                    qprogram.apply(RX(a[i]), qubit)
+                elif self.angle_encoding_type == 'y':
+                    qprogram.apply(RY(a[i]), qubit)
+                elif self.angle_encoding_type == 'z':
                     qprogram.apply(H, qubit)
-                    qprogram.apply(RZ(2*a[i]), qubit)
-
-                for i, control in enumerate(qubits):
-                    for j, target in enumerate(qubits[i+1:], start=i+1):
-                        qprogram.apply(CNOT, control, target)
-                        qprogram.apply(RZ(2*(np.pi-a[i])*(np.pi-a[j])), target)
-                        qprogram.apply(CNOT, control, target)
-
-                # Inverse feature map for second input vector b
-                for i in range(self.n_qubits-2, -1, -1):
-                    for j in range(self.n_qubits-1, i, -1):
-                        qprogram.apply(CNOT, qubits[i], qubits[j])
-                        qprogram.apply(RZ(-2*(np.pi-b[i])*(np.pi-b[j])), qubits[j])
-                        qprogram.apply(CNOT, qubits[i], qubits[j])
-
-                for i, qubit in enumerate(qubits):
-                    qprogram.apply(RZ(-2*b[i]), qubit)
-                    qprogram.apply(H, qubit)
-
-
-            elif self.custom_kernel is not None:
-                qprogram = self.custom_kernel(a,b)
-                    
-
-            # Compile the full circuit
-            circuit = qprogram.to_circ()
-
-            # Submit the circuit to the QPU
-            if self.device.lower() == 'qaptiva':
-                qpu = LinAlg()
-            elif self.device.lower() == 'myqlm':
-                qpu = get_default_qpu()
-            else:
-                raise ValueError(f'Unknown device: {self.device}')
-
-            # Create a quantum job and use a finite number if it is specified in the class instance
-            if self.n_shots is None:
-                job = circuit.to_job()
-            else:
-                job = circuit.to_job(nbshots=self.n_shots)
-
-            # Submit the job and obtain the probability of measuing all qubits in state 0
-            result = qpu.submit(job)
-            probability_all_zeros = result[0].probability
+                    qprogram.apply(RZ(a[i]), qubit)
+                else:
+                    raise ValueError(f'Unknown angle encoding type: {self.angle_encoding_type}')
                 
-            return probability_all_zeros
+            # Inverse feature map for second input vector b
+            for i, qubit in enumerate(qubits):
+                if self.angle_encoding_type.lower() == 'x':
+                    qprogram.apply(RX(-b[i]), qubit)
+                elif self.angle_encoding_type.lower() == 'y':
+                    qprogram.apply(RY(-b[i]), qubit)
+                elif self.angle_encoding_type.lower() == 'z':
+                    qprogram.apply(RZ(-b[i]), qubit)
+                    qprogram.apply(H, qubit)
+
+
+        elif self.kernel_circuit_label == 'zz_encoding':
+
+            # Feature map for first input vector a
+            for i, qubit in enumerate(qubits):
+                qprogram.apply(H, qubit)
+                qprogram.apply(RZ(2*a[i]), qubit)
+
+            for i, control in enumerate(qubits):
+                for j, target in enumerate(qubits[i+1:], start=i+1):
+                    qprogram.apply(CNOT, control, target)
+                    qprogram.apply(RZ(2*(np.pi-a[i])*(np.pi-a[j])), target)
+                    qprogram.apply(CNOT, control, target)
+
+            # Inverse feature map for second input vector b
+            for i in range(self.n_qubits-2, -1, -1):
+                for j in range(self.n_qubits-1, i, -1):
+                    qprogram.apply(CNOT, qubits[i], qubits[j])
+                    qprogram.apply(RZ(-2*(np.pi-b[i])*(np.pi-b[j])), qubits[j])
+                    qprogram.apply(CNOT, qubits[i], qubits[j])
+
+            for i, qubit in enumerate(qubits):
+                qprogram.apply(RZ(-2*b[i]), qubit)
+                qprogram.apply(H, qubit)
+
+
+        elif self.custom_kernel is not None:
+            qprogram = self.custom_kernel(a,b)
+                
+        # Compile the full circuit
+        circuit = qprogram.to_circ()
+
+        # Submit the circuit to the QPU
+        if self.device.lower() == 'qaptiva':
+            qpu = LinAlg()
+        elif self.device.lower() == 'myqlm':
+            qpu = get_default_qpu()
+        else:
+            raise ValueError(f'Unknown device: {self.device}')
+
+        # Create a quantum job and use a finite number if it is specified in the class instance
+        if self.n_shots is None:
+            job = circuit.to_job()
+        else:
+            job = circuit.to_job(nbshots=self.n_shots)
+
+        # Submit the job and obtain the probability of measuing all qubits in state 0
+        result = qpu.submit(job)
+        probability_all_zeros = result[0].probability
+            
+        return probability_all_zeros
             
             
     def qkernel(self, A, B):
-        # Evaluate the kernel matrix     
-        return np.array([[self.kernel_circuit(a, b) for b in B] for a in A])
+        '''
+        This method iterates over all pairs of samples of the dataset and calls kernel_circuit to obtain the elements of the kernel matrix, which is returned.
+
+        Parameters:
+        -----------
+        A: Iterable that contains the sample vectors used as inputs of the feature map.
+        
+        B: Iterable that contains the sample vectors used as inputs of the inverse feature map.
+
+        Returns:
+        --------
+        kernel_matrix (np.ndarray):
+            Kernel matrix of dimension n_samples x n_samples composed of the results of applying the quantum kernel circuit to every pair of samples of the dataset.
+            
+        '''
+
+        # Evaluate the kernel matrix
+        kernel_matrix = np.array([[self.kernel_circuit(a, b) for b in B] for a in A])     
+        return kernel_matrix
 
 
 
@@ -450,10 +511,6 @@ class QCBM:
         fidelity = len(valid_unseen_samples) / len(unseen_samples) if len(unseen_samples) > 0 else 0
         rate = len(valid_unseen_samples) / len(samples_matrix)
         coverage = len(unique_valid_unseen_samples) / (n_sols + len(x_tr))
-
-        # Calculate total cost (0 if matrix is valid, 1 if it has one element off, etc)
-
-        # >>> To be done
 
         metrics = {
             'precision': precision,
