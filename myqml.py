@@ -192,7 +192,7 @@ class QSVM(SVC):
         --------
         kernel_matrix (np.ndarray):
             Kernel matrix of dimension n_samples x n_samples composed of the results of applying the quantum kernel circuit to every pair of samples of the dataset.
-            
+
         '''
 
         # Evaluate the kernel matrix
@@ -241,7 +241,10 @@ class QCBM:
                     qprogram.apply(RX(params[3 * (i + b * self.n_qubits) + 1]), qubit)
                     qprogram.apply(RZ(params[3 * (i + b * self.n_qubits) + 2]), qubit)
                 for i, qubit in enumerate(qubits):
-                    qprogram.apply(CNOT, qubit, qubits[(i + 1) % self.n_qubits])  # CNOT to next qubit
+                    if (i + 1 + b) % self.n_qubits != i:
+                        qprogram.apply(CNOT, qubit, qubits[(i + b + 1) % self.n_qubits])
+                    else:
+                        qprogram.apply(CNOT, qubit, qubits[(i + 1) % self.n_qubits]) 
 
         else:
             pass
@@ -362,7 +365,7 @@ class QCBM:
     def fit(self, method="L-BFGS-B", learning_rate=0.1, tol=1e-5, max_iter=20, g_tol=1e-10, f_tol=0, x_tr=None, target_probs=None):
 
         # Initialize random theta
-        params_0 = np.random.rand(self.n_params) * 2 * np.pi
+        params_0 = np.random.rand(self.n_params) * np.pi
 
         if target_probs is None:
             # Compute target probability distribution from the samples
