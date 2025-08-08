@@ -13,6 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 from functools import partial
+from abc import ABC, abstractmethod
 from scipy.optimize import minimize
 from time import time
 from sklearn.svm import SVC
@@ -527,3 +528,59 @@ class QCBM:
 
 
 
+####################################################################################
+################################ Feature Maps ######################################
+####################################################################################
+
+class Feature_Map(ABC):
+    def __init__(self, n_qubits):
+        self.n_qubits = n_qubits
+
+    @abstractmethod
+    def get_quantum_program(self, a, qprogram=None, qubits=None):
+        pass
+
+class Angle_Encoding(Feature_Map):
+    def __init__(self, n_qubits, axis='x'):
+        super().__init__(n_qubits)
+        self.axis = axis
+
+    def get_quantum_program(self, a, qprogram=None, qubits=None):
+
+        if qprogram is None:
+        # Create a quantum program with the specified number of qubits if qprogram is not provided
+            qprogram = Program()
+            qubits = qprogram.qalloc(self.n_qubits)
+        
+        for i, qubit in enumerate(qubits):
+            if self.axis.lower() == 'x':
+                qprogram.apply(RX(a[i]), qubit)
+            elif self.axis.lower() == 'y':
+                qprogram.apply(RY(a[i]), qubit)
+            elif self.axis.lower() == 'z':
+                qprogram.apply(H, qubit)
+                qprogram.apply(RZ(a[i]), qubit)
+            else:
+                raise ValueError(f'Invalid axis {self.axis}. Select x, y or z')
+            
+        return qprogram, qubits
+    
+class ZZ_Feature_Map(Feature_Map):
+    def get_quantum_program(self, a, qprogram=None, qubits=None):
+
+        if qprogram is None:
+            # Create a quantum program with the specified number of qubits if qprogram is not provided
+            qprogram = Program()
+            qubits = qprogram.qalloc(self.n_qubits)
+        
+        for i, qubit in enumerate(qubits):
+            qprogram.apply(H, qubit)
+            qprogram.apply(RZ(2*a[i]), qubit)
+
+        for i, control in enumerate(qubits):
+            for j, target in enumerate(qubits[i+1:], start=i+1):
+                qprogram.apply(CNOT, control, target)
+                qprogram.apply(RZ(2*(np.pi-a[i])*(np.pi-a[j])), target)
+                qprogram.apply(CNOT, control, target)
+
+        return qprogram, qubits
