@@ -1,4 +1,8 @@
 '''
+
+Quantum Machine Learning (QML) Library in myQLM SDK:
+----------------------------------------------------
+
 In this file, we define different Quantum Machine Learning (QML) algorithms implemented in the SDK myQLM by Atos:
 
 1. Quantum Support Vector Machine (QSVM) defines a quantum kernel used as a subroutine in a SVM, 
@@ -6,6 +10,9 @@ which is a supervised machine learning algorithm used for binary classification 
 
 2. Quantum Circuit Born Machine (QCBM) is an unsupervised implicit generative machine learning model,
 which leverages Born's postulate to express a probability distribution as a quantum circuit.
+
+3. Quantum-Classical Convolutional Neural Network (QCCNN) is a supervised hybrid model that combines 
+quantum convolutional layers with classical convolutional neural networks.
 
 '''
 
@@ -17,9 +24,12 @@ from abc import ABC, abstractmethod
 from scipy.optimize import minimize
 from time import time
 from sklearn.svm import SVC
+import tensorflow as tf
 
 from qat.lang.AQASM import Program, H, RX, RY, RZ, CNOT
-from qat.qpus import get_default_qpu
+from qat.qpus import get_default_qpu, PyLinalg
+from qat.core import Observable, Term
+from qat.plugins import ObservableSplitter
 #from qlmaas.qpus import LinAlg # Comment when using myQLM
 
 
@@ -525,7 +535,340 @@ class QCBM:
         }
 
         return metrics
+    
 
+
+####################################################################################
+############### Quantum-Classical Convolutional Neural Network #####################
+####################################################################################
+
+class QCCNN(ABC):
+    def __init__(self, n_qubits, device, n_blocks, n_shots, optimizer_name, loss, learning_rate = 0.01, opt_model_path=None):
+
+        if device.lower() == 'qaptiva':
+            from qlmaas.qpus import LinAlg
+
+        self.n_qubits = n_qubits
+        self.device = device
+        self.n_blocks = n_blocks
+        self.n_shots = n_shots
+        self.optimizer_name = optimizer_name
+        self.loss = loss
+        self.learning_rate = learning_rate
+        self.opt_model_path = opt_model_path
+
+
+    @abstractmethod
+    def quantum_conv_kernel_circuit(self, x):
+        '''
+        This method implements a quantum convolutional kernel circuit for a QCCNN.
+        It applies a series of rotation gates and CNOT gates to the qubits based on the input data x and parameters params.
+        The circuit is designed to encode the input data into the quantum state of the qubits.
+
+        Parameters:
+        -----------
+        x (np.ndarray): 
+            Input data vector of length n_qubits that is used as input angles of the rotation gates applied to each qubit in the feature map.
+
+
+        Returns:
+        --------
+        expected_z_values (np.ndarray):
+            The expectation values of the Z observable for each qubit after applying the quantum circuit.
+        '''
+        pass
+
+
+    def quantum_conv_layer(self, image):
+        '''
+        Slides the quantum convolutional kernel over the image and applies the quantum circuit to each 2x2 region, and generates 4 channels of output.
+        '''
+        length_image = image.shape[0]  # Assuming the image is square
+        output_image = np.zeros((length_image//2, length_image//2, 4))
+
+        # Iterate over the pixels of the original image in steps of 2
+        for j in range(0, length_image, 2):
+            for k in range(0, length_image, 2):
+                # Evaluates the quantum circuit on the 2x2 region of the image
+                q_results = self.quantum_conv_kernel_circuit([image[j, k, 0], image[j, k + 1, 0], image[j + 1, k, 0], image[j + 1, k + 1, 0]])
+                
+                # Each qubit expectation value corresponds to a channel in the output image
+                for c in range(4):
+                    output_image[j // 2, k // 2, c] = q_results[c]
+
+        return output_image
+
+
+    def quantum_conv_preprocessing(self, train_images, test_images):
+        '''
+        Applies the quantum convolutional layer to each image in the dataset.
+        '''
+
+        n_params = 3*self.n_qubits*self.n_blocks # Number of parameters in the quantum convolutional kernel
+        self.params = np.random.rand(n_params) * np.pi  # Random parameters for the quantum circuit
+
+        quantum_train_images = np.asarray([self.quantum_conv_layer(image=img) for img in train_images])
+
+        # If no test images are provided, return only the processed training images
+        if test_images is None:
+            return quantum_train_images
+        
+        quantum_test_images = np.asarray([self.quantum_conv_layer(image=img) for img in test_images])
+
+        return quantum_train_images, quantum_test_images
+    
+    
+    @abstractmethod
+    def classical_model():
+        pass
+
+
+    def train(self, preprocessing, train_images, train_labels, validation_images, validation_labels, batch_size, n_epochs, early_stop_crit=False, patience=None, min_delta=None):
+        '''
+        This method trains the QCCNN model using the quantum convolutional preprocessing and a classical model.
+        '''
+
+        if preprocessing:
+            quantum_train_images, quantum_validation_images = self.quantum_conv_preprocessing(train_images, validation_images)
+        else:
+            quantum_train_images = train_images
+            quantum_validation_images = validation_images
+        
+
+        class_model = self.classical_model()
+
+        if early_stop_crit:
+            early_stop = tf.keras.callbacks.EarlyStopping(monitor="val_loss", patience=patience, min_delta = min_delta, restore_best_weights = True)
+
+            self.history = class_model.fit(
+                quantum_train_images,
+                train_labels,
+                validation_data=(quantum_validation_images, validation_labels),
+                batch_size=batch_size,
+                epochs=n_epochs,
+                verbose=2,
+                callbacks=[early_stop]
+            )
+        else:
+            self.history = class_model.fit(
+                quantum_train_images,
+                train_labels,
+                validation_data=(quantum_validation_images, validation_labels),
+                batch_size=batch_size,
+                epochs=n_epochs,
+                verbose=2
+            )
+
+        return self.history
+
+
+    def plot_quantum_images(self, train_images, quantum_train_images, n_samples):
+        n_samples = 4
+        n_channels = self.n_qubits
+        fig, axes = plt.subplots(1 + n_channels, n_samples, figsize=(10, 10))
+        for k in range(n_samples):
+            axes[0, 0].set_ylabel("Input")
+            if k != 0:
+                axes[0, k].yaxis.set_visible(False)
+            axes[0, k].imshow(train_images[k, :, :, 0], cmap="gray")
+
+            # Plot all output channels
+            for c in range(n_channels):
+                axes[c + 1, 0].set_ylabel("Output [ch. {}]".format(c))
+                if k != 0:
+                    axes[c, k].yaxis.set_visible(False)
+                axes[c + 1, k].imshow(quantum_train_images[k, :, :, c], cmap="gray")
+
+        plt.tight_layout()
+        plt.show = ()
+
+
+    def plot_loss(self, c_history=None, fig_path=None):
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
+
+        ax1.plot(self.history["val_accuracy"], "-ob", label="With quantum layer")
+        if c_history: 
+            ax1.plot(c_history.history["val_accuracy"], "-og", label="Without quantum layer")
+        ax1.set_ylabel("Accuracy")
+        ax1.set_ylim([0, 1])
+        ax1.set_xlabel("Epoch")
+        ax1.legend()
+
+        ax2.plot(self.history["val_loss"], "-ob", label="With quantum layer")
+        if c_history: 
+            ax2.plot(c_history.history["val_loss"], "-og", label="Without quantum layer")
+        ax2.set_ylabel("Loss")
+        ax2.set_ylim(top=2.5)
+        ax2.set_xlabel("Epoch")
+        ax2.legend()
+        plt.tight_layout()
+        plt.show = ()
+
+        if fig_path:
+            fig.savefig(fig_path + '/qccnn_loss.png', dpi=300, bbox_inches='tight')
+            print(f'Figure saved at {fig_path}/qccnn_loss.png')
+
+    
+    def optimize_quantum_params(self, train_images, train_labels, method='cobyla', max_iter=10):
+        params_0 = self.params
+        n_params = len(params_0)
+
+        lower_bound = 0.0
+        upper_bound = np.pi
+
+        cnn_model = tf.keras.models.load_model(self.opt_model_path + '/qccnn_model_v0')
+
+        train_accuracies = []
+
+        def quantum_loss_function(params):
+            self.params = params
+            quantum_train_images = self.quantum_conv_preprocessing(train_images)
+            train_loss, train_accuracy = cnn_model.evaluate(quantum_train_images, train_labels, verbose=0)
+            train_accuracies.append(train_accuracy)
+            return train_loss
+        
+
+        if method.lower() == 'cobyla':
+            # COBYLA needs constraints in the form g(x) >= 0
+            constraints = []
+            for i in range(n_params):
+                constraints.append({'type': 'ineq', 'fun': lambda x, i=i: x[i] - lower_bound})  # x[i] >= lower
+                constraints.append({'type': 'ineq', 'fun': lambda x, i=i: upper_bound - x[i]})  # upper - x[i] >= 0
+
+            result = minimize(
+                quantum_loss_function,
+                params_0,
+                method='COBYLA',
+                constraints=constraints,
+                options={'maxiter': max_iter, 'disp': True}
+            )
+
+            self.params = result.x
+
+            return result, train_accuracies
+        
+
+    def predict(self, preprocessing, test_images, test_labels):
+        if preprocessing:
+            quantum_test_images = self.quantum_conv_preprocessing(test_images)
+        else:
+            quantum_test_images = test_images
+
+        cnn_model = tf.keras.models.load_model(self.opt_model_path + '/qccnn_model_v0')
+        test_loss, test_accuracy = cnn_model.evaluate(quantum_test_images, test_labels, verbose=0)
+        return test_loss, test_accuracy
+    
+
+
+
+class Default_QCCNN(QCCNN):
+    def quantum_conv_kernel_circuit(self, x):
+        '''
+        This method implements a quantum convolutional kernel circuit for a custom QCCNN.
+        It applies a series of rotation gates and CNOT gates to the qubits based on the input data x and parameters params.
+        The circuit is designed to encode the input data into the quantum state of the qubits.
+
+        Parameters:
+        -----------
+        x (np.ndarray): 
+            Input data vector of length n_qubits that is used as input angles of the rotation gates applied to each qubit in the feature map.
+
+        params (np.ndarray): 
+            Parameters for the rotation gates in the quantum circuit, which are optimized during training.
+
+        Returns:
+        --------
+        expected_z_values (np.ndarray):
+            The expectation values of the Z observable for each qubit after applying the quantum circuit.
+        '''
+
+        angle_encoding = Angle_Encoding(self.n_qubits)
+        qprogram, qubits = angle_encoding.get_quantum_program(x)
+        
+        for b in range(self.n_blocks):
+            for i, qubit in enumerate(qubits):
+                qprogram.apply(RZ(self.params[3 * (i + b * self.n_qubits)]), qubit)
+                qprogram.apply(RX(self.params[3 * (i + b * self.n_qubits) + 1]), qubit)
+                qprogram.apply(RZ(self.params[3 * (i + b * self.n_qubits) + 2]), qubit)
+            for i, qubit in enumerate(qubits):
+                if (i + 1 + b) % self.n_qubits != i:
+                    qprogram.apply(CNOT, qubit, qubits[(i + b + 1) % self.n_qubits])
+                else:
+                    qprogram.apply(CNOT, qubit, qubits[(i + 1) % self.n_qubits])
+        
+        circuit = qprogram.to_circ()
+
+        expected_z_values = np.zeros(self.n_qubits)
+
+        for i in range(self.n_qubits):
+            obs = Observable(self.n_qubits)
+            obs.add_term(Term(1, "Z", [i]))
+
+            # Submit the circuit to the QPU, measuring the expectation value of the observable
+            if self.device.lower() == 'qaptiva':
+                qpu = ObservableSplitter() | LinAlg()
+            elif self.device.lower() == 'myqlm':
+                qpu = ObservableSplitter() | PyLinalg()
+            else:
+                raise ValueError(f'Unknown device: {self.device}')
+
+            # Create a quantum job and use a finite number if it is specified in the class instance
+            if self.n_shots is None:
+                job = circuit.to_job("OBS", observable=obs)
+            else:
+                job = circuit.to_job("OBS", observable=obs, nbshots=self.n_shots)
+
+            # Submit the job and obtain the probability of measuing all qubits in state 0
+            expected_z_values[i] = qpu.submit(job).value
+
+        return expected_z_values
+    
+
+    def classical_model(self):
+        '''
+        Initializes and returns a custom Keras model
+        which is ready to be trained
+        '''
+        
+        model = tf.keras.models.Sequential([
+
+            # First convolutional layer
+            tf.keras.layers.Conv2D(filters=50, kernel_size=(2, 2), activation='relu'),
+                    
+            # First pooling layer
+            tf.keras.layers.MaxPooling2D(pool_size=(2, 2)),
+            
+            # Second convolutional layer
+            tf.keras.layers.Conv2D(filters=64, kernel_size=(5, 5), activation='relu'),
+            
+            # Second pooling layer
+            tf.keras.layers.MaxPooling2D(pool_size=(2, 2)),
+            
+            # Flatten to feed into dense layer
+            tf.keras.layers.Flatten(),
+            
+            # Fully connected dense layer
+            tf.keras.layers.Dense(64, activation='relu'),
+            
+            # Final output layer with 10 units for classification
+            tf.keras.layers.Dense(10, activation='softmax')
+        ])
+
+        if self.optimizer_name.lower() == 'adam':
+            optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate)
+        else:
+            pass # Add other optimizers as needed
+
+        model.compile(
+            optimizer=optimizer,
+            loss=self.loss,
+            metrics=["accuracy"],
+        )
+
+        model.save(self.opt_model_path + '/qccnn_model_v0')
+
+        return model
+    
 
 
 ####################################################################################
