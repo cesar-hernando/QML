@@ -25,12 +25,15 @@ from scipy.optimize import minimize
 from time import time
 from sklearn.svm import SVC
 import tensorflow as tf
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern
 
 from qat.lang.AQASM import Program, H, RX, RY, RZ, CNOT
 from qat.qpus import get_default_qpu, PyLinalg
 from qat.core import Observable, Term
 from qat.plugins import ObservableSplitter
 #from qlmaas.qpus import LinAlg # Comment when using myQLM
+
 
 
 #############################################################
@@ -543,7 +546,7 @@ class QCBM:
 ####################################################################################
 
 class QCCNN(ABC):
-    def __init__(self, n_qubits, device, n_blocks, n_shots, optimizer_name, loss, learning_rate = 0.01, opt_model_path=None):
+    def __init__(self, n_qubits, device, n_blocks, n_shots, optimizer_name, loss, learning_rate = 0.01, opt_model_path=None, np_arrays_path=None):
 
         if device.lower() == 'qaptiva':
             from qlmaas.qpus import LinAlg
@@ -556,6 +559,7 @@ class QCCNN(ABC):
         self.loss = loss
         self.learning_rate = learning_rate
         self.opt_model_path = opt_model_path
+        self.np_arrays_path = np_arrays_path
 
 
     @abstractmethod
@@ -599,27 +603,33 @@ class QCCNN(ABC):
         return output_image
 
 
-    def quantum_conv_preprocessing(self, train_images, test_images):
+    def quantum_conv_preprocessing(self, train_images, test_images=None, save=True):
         '''
         Applies the quantum convolutional layer to each image in the dataset.
         '''
 
         n_params = 3*self.n_qubits*self.n_blocks # Number of parameters in the quantum convolutional kernel
         self.params = np.random.rand(n_params) * np.pi  # Random parameters for the quantum circuit
+        if save:
+            np.save(self.np_arrays_path + "quantum_random_params.npy", self.params)
 
         quantum_train_images = np.asarray([self.quantum_conv_layer(image=img) for img in train_images])
+        if save:
+            np.save(self.np_arrays_path + "quantum_train_images.npy", quantum_train_images)
 
         # If no test images are provided, return only the processed training images
         if test_images is None:
-            return quantum_train_images
+            return quantum_train_images, self.params
         
         quantum_test_images = np.asarray([self.quantum_conv_layer(image=img) for img in test_images])
+        if save:
+            np.save(self.np_arrays_path + "quantum_test_images.npy", quantum_test_images)
 
-        return quantum_train_images, quantum_test_images
+        return quantum_train_images, quantum_test_images, self.params
     
     
     @abstractmethod
-    def classical_model():
+    def classical_model(self):
         pass
 
 
@@ -629,7 +639,7 @@ class QCCNN(ABC):
         '''
 
         if preprocessing:
-            quantum_train_images, quantum_validation_images = self.quantum_conv_preprocessing(train_images, validation_images)
+            quantum_train_images, quantum_validation_images, _ = self.quantum_conv_preprocessing(train_images, validation_images)
         else:
             quantum_train_images = train_images
             quantum_validation_images = validation_images
@@ -686,17 +696,23 @@ class QCCNN(ABC):
     def plot_loss(self, c_history=None, fig_path=None):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
 
-        ax1.plot(self.history["val_accuracy"], "-ob", label="With quantum layer")
-        if c_history: 
-            ax1.plot(c_history.history["val_accuracy"], "-og", label="Without quantum layer")
+        ax1.plot(self.history.history["accuracy"], "-or", label="Training accuracy with quantum layer")
+        ax1.plot(self.history.history["val_accuracy"], "-ob", label="Validation accuracy with quantum layer")
+        if c_history is not None: 
+            ax1.plot(c_history.history["accuracy"], "-oc", label="Validation accueracy without quantum layer")
+            ax1.plot(c_history.history["val_accuracy"], "-og", label="Validation accueracy without quantum layer")
+            
         ax1.set_ylabel("Accuracy")
         ax1.set_ylim([0, 1])
         ax1.set_xlabel("Epoch")
         ax1.legend()
 
-        ax2.plot(self.history["val_loss"], "-ob", label="With quantum layer")
-        if c_history: 
-            ax2.plot(c_history.history["val_loss"], "-og", label="Without quantum layer")
+        ax2.plot(self.history.history["loss"], "-or", label="Training loss with quantum layer")
+        ax2.plot(self.history.history["val_loss"], "-ob", label="Validation loss with quantum layer")
+        if c_history is not None: 
+            ax2.plot(c_history.history["loss"], "-oc", label="Training loss without quantum layer")
+            ax2.plot(c_history.history["val_loss"], "-og", label="Validation loss without quantum layer")
+
         ax2.set_ylabel("Loss")
         ax2.set_ylim(top=2.5)
         ax2.set_xlabel("Epoch")
@@ -704,27 +720,29 @@ class QCCNN(ABC):
         plt.tight_layout()
         plt.show = ()
 
-        if fig_path:
-            fig.savefig(fig_path + '/qccnn_loss.png', dpi=300, bbox_inches='tight')
-            print(f'Figure saved at {fig_path}/qccnn_loss.png')
+        if fig_path is not None:
+            fig.savefig(fig_path + 'qccnn_loss.png', dpi=300, bbox_inches='tight')
+            print(f'Figure saved at {fig_path}qccnn_loss.png')
 
     
-    def optimize_quantum_params(self, train_images, train_labels, method='cobyla', max_iter=10):
+    def optimize_quantum_params(self, train_images, train_labels, method='cobyla', max_iter=10, n_init=5, n_iters=20):
         params_0 = self.params
         n_params = len(params_0)
 
         lower_bound = 0.0
         upper_bound = np.pi
 
-        cnn_model = tf.keras.models.load_model(self.opt_model_path + '/qccnn_model_v0')
+        cnn_model = tf.keras.models.load_model(self.opt_model_path + 'qccnn_model_v0.keras')
 
         train_accuracies = []
+        train_losses = []
 
         def quantum_loss_function(params):
             self.params = params
-            quantum_train_images = self.quantum_conv_preprocessing(train_images)
+            quantum_train_images, _ = self.quantum_conv_preprocessing(train_images, save=False)
             train_loss, train_accuracy = cnn_model.evaluate(quantum_train_images, train_labels, verbose=0)
             train_accuracies.append(train_accuracy)
+            train_losses.append(train_loss)
             return train_loss
         
 
@@ -744,19 +762,57 @@ class QCCNN(ABC):
             )
 
             self.params = result.x
+            np.save(self.np_arrays_path + "quantum_opt_params.npy", self.params)
 
-            return result, train_accuracies
+            return result, train_accuracies, train_losses
         
+        elif method.lower() == 'bayesian_optimization':
+            min_vals = [0]*n_params
+            max_vals = [np.pi]*n_params
+            bounds = [(min_vals[i], max_vals[i]) for i in range(n_params)]
 
+            bo = BayesianOptimizer(func=quantum_loss_function, bounds=bounds, n_init=n_init)
+            X_opt, Y_opt, history = bo.optimize(n_iters=n_iters)
+            best_idx = np.argmin(Y_opt)
+
+            self.params = X_opt[best_idx]
+            np.save(self.np_arrays_path + "quantum_opt_params.npy", self.params)
+
+            return history, train_accuracies, train_losses
+
+    
     def predict(self, preprocessing, test_images, test_labels):
         if preprocessing:
-            quantum_test_images = self.quantum_conv_preprocessing(test_images)
+            quantum_test_images, _ = self.quantum_conv_preprocessing(test_images, save=False)
         else:
             quantum_test_images = test_images
 
-        cnn_model = tf.keras.models.load_model(self.opt_model_path + '/qccnn_model_v0')
+        cnn_model = tf.keras.models.load_model(self.opt_model_path + 'qccnn_model_v0.keras')
         test_loss, test_accuracy = cnn_model.evaluate(quantum_test_images, test_labels, verbose=0)
         return test_loss, test_accuracy
+    
+
+    def plot_q_train_loss(train_accuracies, train_losses, fig_path=None):
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
+
+        ax1.plot(train_accuracies, "-or")
+        ax1.set_ylabel("Accuracy")
+        ax1.set_ylim([0, 1])
+        ax1.set_xlabel("Epoch")
+        ax1.set_title("Evolution of training accuracy in quantum ansatz training")
+
+        ax2.plot(train_losses, "-or")
+        ax2.set_ylabel("Loss")
+        ax2.set_ylim(top=2.5)
+        ax2.set_xlabel("Epoch")
+        ax1.set_title("Evolution of training loss in quantum ansatz training")
+    
+        plt.tight_layout()
+        plt.show = ()
+
+        if fig_path is not None:
+            fig.savefig(fig_path + 'qccnn_quantum_loss.png', dpi=300, bbox_inches='tight')
+            print(f'Figure saved at {fig_path}qccnn_quantum_loss.png')
     
 
 
@@ -865,7 +921,7 @@ class Default_QCCNN(QCCNN):
             metrics=["accuracy"],
         )
 
-        model.save(self.opt_model_path + '/qccnn_model_v0')
+        model.save(self.opt_model_path + 'qccnn_model_v0.keras')
 
         return model
     
@@ -927,3 +983,97 @@ class ZZ_Feature_Map(Feature_Map):
                 qprogram.apply(CNOT, control, target)
 
         return qprogram, qubits
+    
+
+    ############################################################
+    ######### Classical ML algorithms ##########################
+    ############################################################
+
+class BayesianOptimizer:
+    def __init__(self, func, bounds, n_init=5, kernel=None, xi=0.01, seed=42):
+        """
+        Parameters:
+            sqa : class
+                Contains the black-box function to optimize.
+            bounds : list of tuples
+                Bounds for each dimension [(min, max), ...].
+            n_init : int
+                Number of initial random evaluations.
+            kernel : sklearn kernel or None
+                Kernel for the Gaussian Process.
+            xi : float
+                Exploration-exploitation parameter for EI.
+        """
+
+        np.random.seed(seed)
+
+        self.func = func
+        self.bounds = np.array(bounds)
+        self.dim = len(bounds)
+        self.xi = xi
+        self.kernel = kernel if kernel else Matern(nu=2.5)
+        self.model = GaussianProcessRegressor(kernel=self.kernel, alpha=1e-3, normalize_y=True)
+
+        # Initialize with random samples
+        self.X_sample = self.random_sample(n_init)
+        self.Y_sample = self.evaluate(self.X_sample)
+
+    def random_sample(self, n):
+        return np.random.uniform(self.bounds[:, 0], self.bounds[:, 1], size=(n, self.dim))
+
+    def evaluate(self, X):
+        return np.array([self.func(x) for x in X]).reshape(-1, 1)
+
+    def expected_improvement(self, X):
+        mu, sigma = self.model.predict(X, return_std=True)
+        mu_sample_opt = np.min(self.Y_sample)
+        with np.errstate(divide='warn'):
+            imp = mu_sample_opt - mu - self.xi
+            Z = imp / sigma
+            ei = imp * norm.cdf(Z) + sigma * norm.pdf(Z)
+            ei[sigma == 0.0] = 0.0
+        return ei
+    
+    def suggest(self, n_candidates=1000, n_restarts=10, mode=1):
+
+        def min_obj(x):
+                x = np.atleast_2d(x)
+                return -self.expected_improvement(x)
+
+        if mode == 0: # random search
+            X_grid = self.random_sample(n_candidates)
+            ei = self.expected_improvement(X_grid)
+            return X_grid[np.argmax(ei)]
+        else:
+            best_x = None
+            best_ei = -np.inf
+
+            for _ in range(n_restarts):
+                x0 = self.random_sample(1).flatten()  # random initial point
+                res = minimize(min_obj, x0=x0, bounds=self.bounds, method="L-BFGS-B")
+
+                if res.success:
+                    ei_val = -res.fun  # remember we minimized the negative
+                    if ei_val > best_ei:
+                        best_ei = ei_val
+                        best_x = res.x
+
+            return best_x
+        
+
+    def step(self):
+        self.model.fit(self.X_sample, self.Y_sample)
+        x_next = self.suggest().reshape(1, -1)
+        y_next = self.evaluate(x_next)
+        self.X_sample = np.vstack((self.X_sample, x_next))
+        self.Y_sample = np.vstack((self.Y_sample, y_next))
+        return x_next.squeeze(), y_next.item()
+
+    def optimize(self, n_iters=20, verbose=True):
+        history = []
+        for i in range(n_iters):
+            x, y = self.step()
+            if verbose:
+                print(f"Iter {i+1}: x = {x}, f(x) = {y:.4f}")
+            history.append((x, y))
+        return self.X_sample, self.Y_sample, history
