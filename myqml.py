@@ -603,13 +603,16 @@ class QCCNN(ABC):
         return output_image
 
 
-    def quantum_conv_preprocessing(self, train_images, test_images=None, save=True):
+    def quantum_conv_preprocessing(self, train_images, test_images=None, save=True, params=None):
         '''
         Applies the quantum convolutional layer to each image in the dataset.
         '''
+        if params is None:
+            n_params = 3*self.n_qubits*self.n_blocks # Number of parameters in the quantum convolutional kernel
+            self.params = np.random.rand(n_params) * np.pi  # Random parameters for the quantum circuit
+        else:
+            self.params = params
 
-        n_params = 3*self.n_qubits*self.n_blocks # Number of parameters in the quantum convolutional kernel
-        self.params = np.random.rand(n_params) * np.pi  # Random parameters for the quantum circuit
         if save:
             np.save(self.np_arrays_path + "quantum_random_params.npy", self.params)
 
@@ -669,6 +672,11 @@ class QCCNN(ABC):
                 verbose=2
             )
 
+        # Save the model if a path is specified
+        if self.opt_model_path is not None:
+            # Save the model to the specified path
+            class_model.save(self.opt_model_path + 'qccnn_model_v0.keras')
+
         return self.history
 
 
@@ -696,22 +704,22 @@ class QCCNN(ABC):
     def plot_loss(self, c_history=None, fig_path=None):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
 
-        ax1.plot(self.history.history["accuracy"], "-or", label="Training accuracy with quantum layer")
-        ax1.plot(self.history.history["val_accuracy"], "-ob", label="Validation accuracy with quantum layer")
+        ax1.plot(self.history.history["accuracy"], "--r", label="Training accuracy with quantum layer")
+        ax1.plot(self.history.history["val_accuracy"], "-b", label="Validation accuracy with quantum layer")
         if c_history is not None: 
-            ax1.plot(c_history.history["accuracy"], "-oc", label="Validation accueracy without quantum layer")
-            ax1.plot(c_history.history["val_accuracy"], "-og", label="Validation accueracy without quantum layer")
+            ax1.plot(c_history.history["accuracy"], "--c", label="Training accuracy without quantum layer")
+            ax1.plot(c_history.history["val_accuracy"], "-g", label="Validation accuracy without quantum layer")
             
         ax1.set_ylabel("Accuracy")
         ax1.set_ylim([0, 1])
         ax1.set_xlabel("Epoch")
         ax1.legend()
 
-        ax2.plot(self.history.history["loss"], "-or", label="Training loss with quantum layer")
-        ax2.plot(self.history.history["val_loss"], "-ob", label="Validation loss with quantum layer")
+        ax2.plot(self.history.history["loss"], "--r", label="Training loss with quantum layer")
+        ax2.plot(self.history.history["val_loss"], "-b", label="Validation loss with quantum layer")
         if c_history is not None: 
-            ax2.plot(c_history.history["loss"], "-oc", label="Training loss without quantum layer")
-            ax2.plot(c_history.history["val_loss"], "-og", label="Validation loss without quantum layer")
+            ax2.plot(c_history.history["loss"], "--c", label="Training loss without quantum layer")
+            ax2.plot(c_history.history["val_loss"], "-g", label="Validation loss without quantum layer")
 
         ax2.set_ylabel("Loss")
         ax2.set_ylim(top=2.5)
@@ -739,7 +747,7 @@ class QCCNN(ABC):
 
         def quantum_loss_function(params):
             self.params = params
-            quantum_train_images, _ = self.quantum_conv_preprocessing(train_images, save=False)
+            quantum_train_images, _ = self.quantum_conv_preprocessing(train_images, save=False, params=params)
             train_loss, train_accuracy = cnn_model.evaluate(quantum_train_images, train_labels, verbose=0)
             train_accuracies.append(train_accuracy)
             train_losses.append(train_loss)
@@ -783,7 +791,7 @@ class QCCNN(ABC):
     
     def predict(self, preprocessing, test_images, test_labels):
         if preprocessing:
-            quantum_test_images, _ = self.quantum_conv_preprocessing(test_images, save=False)
+            quantum_test_images, _ = self.quantum_conv_preprocessing(test_images, save=False, params=self.params)
         else:
             quantum_test_images = test_images
 
@@ -792,6 +800,7 @@ class QCCNN(ABC):
         return test_loss, test_accuracy
     
 
+    @staticmethod
     def plot_q_train_loss(train_accuracies, train_losses, fig_path=None):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
 
