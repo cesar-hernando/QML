@@ -27,6 +27,7 @@ from sklearn.svm import SVC
 import tensorflow as tf
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern
+from scipy.stats import norm
 
 from qat.lang.AQASM import Program, H, RX, RY, RZ, CNOT
 from qat.qpus import get_default_qpu, PyLinalg
@@ -701,7 +702,7 @@ class QCCNN(ABC):
         plt.show = ()
 
 
-    def plot_loss(self, c_history=None, fig_path=None):
+    def plot_loss(self, c_history=None, fig_path=None, fig_name='qccnn_loss.png'):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
 
         ax1.plot(self.history.history["accuracy"], "--r", label="Training accuracy with quantum layer")
@@ -729,8 +730,8 @@ class QCCNN(ABC):
         plt.show = ()
 
         if fig_path is not None:
-            fig.savefig(fig_path + 'qccnn_loss.png', dpi=300, bbox_inches='tight')
-            print(f'Figure saved at {fig_path}qccnn_loss.png')
+            fig.savefig(fig_path + fig_name, dpi=300, bbox_inches='tight')
+            print(f'Figure saved at {fig_path}' + fig_name)
 
     
     def optimize_quantum_params(self, train_images, train_labels, method='cobyla', max_iter=10, n_init=5, n_iters=20):
@@ -801,7 +802,7 @@ class QCCNN(ABC):
     
 
     @staticmethod
-    def plot_q_train_loss(train_accuracies, train_losses, fig_path=None):
+    def plot_q_train_loss(train_accuracies, train_losses, fig_path=None, fig_name='qccnn_quantum_loss.png'):
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
 
         ax1.plot(train_accuracies, "-or")
@@ -820,8 +821,8 @@ class QCCNN(ABC):
         plt.show = ()
 
         if fig_path is not None:
-            fig.savefig(fig_path + 'qccnn_quantum_loss.png', dpi=300, bbox_inches='tight')
-            print(f'Figure saved at {fig_path}qccnn_quantum_loss.png')
+            fig.savefig(fig_path + fig_name, dpi=300, bbox_inches='tight')
+            print(f'Figure saved at {fig_path}' + fig_name)
     
 
 
