@@ -703,6 +703,7 @@ class QCCNN(ABC):
 
 
     def plot_loss(self, c_history=None, fig_path=None, fig_name='qccnn_loss.png'):
+        
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
 
         ax1.plot(self.history.history["accuracy"], "--r", label="Training accuracy with quantum layer")
@@ -830,17 +831,15 @@ class QCCNN(ABC):
 class Default_QCCNN(QCCNN):
     def quantum_conv_kernel_circuit(self, x):
         '''
-        This method implements a quantum convolutional kernel circuit for a custom QCCNN.
-        It applies a series of rotation gates and CNOT gates to the qubits based on the input data x and parameters params.
-        The circuit is designed to encode the input data into the quantum state of the qubits.
+        This method implements a quantum convolutional kernel circuit for a custom QCCNN. It applies first an angle encoding 
+        feature map to map the input data (portion of the image) to a quantum tate, and then applies series of rotation gates 
+        with random angles and CNOT gates to the qubits.
 
         Parameters:
         -----------
         x (np.ndarray): 
             Input data vector of length n_qubits that is used as input angles of the rotation gates applied to each qubit in the feature map.
 
-        params (np.ndarray): 
-            Parameters for the rotation gates in the quantum circuit, which are optimized during training.
 
         Returns:
         --------
@@ -930,8 +929,6 @@ class Default_QCCNN(QCCNN):
             loss=self.loss,
             metrics=["accuracy"],
         )
-
-        model.save(self.opt_model_path + 'qccnn_model_v0.keras')
 
         return model
     
