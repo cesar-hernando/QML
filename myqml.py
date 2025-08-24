@@ -682,6 +682,9 @@ class QCCNN(ABC):
 
 
     def plot_quantum_images(self, train_images, quantum_train_images, n_samples):
+        '''
+        Plot n_samples examples of the output images resulting from the quantum convolutional layer preprocessing
+        '''
         n_samples = 4
         n_channels = self.n_qubits
         fig, axes = plt.subplots(1 + n_channels, n_samples, figsize=(10, 10))
@@ -703,7 +706,9 @@ class QCCNN(ABC):
 
 
     def plot_loss(self, c_history=None, fig_path=None, fig_name='qccnn_loss.png'):
-        
+        '''
+        Plots two figures: one for the evolution of the training and validation accuracy of the model with and without the quantum convolutional layer, and the same figure but for the loss
+        '''
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
 
         ax1.plot(self.history.history["accuracy"], "--r", label="Training accuracy with quantum layer")
@@ -736,6 +741,11 @@ class QCCNN(ABC):
 
     
     def optimize_quantum_params(self, train_images, train_labels, method='cobyla', max_iter=10, n_init=5, n_iters=20):
+        '''
+        Fixing the optimal weights and biases of the classical CNN, we vary the angles of the rotational gates in the quantum layer
+        to minimize the training loss, using different training data. We implement wo different gradient-free optimization methods: 
+        Cobyla and Bayesian Optimization. In the future, parameter shift rule or autodifferentiation could be implemented.
+        '''
         params_0 = self.params
         n_params = len(params_0)
 
@@ -792,6 +802,9 @@ class QCCNN(ABC):
 
     
     def predict(self, preprocessing, test_images, test_labels):
+        '''
+        Evaluates the performance of the quantum enhanced convolutional network on the test set.
+        '''
         if preprocessing:
             quantum_test_images, _ = self.quantum_conv_preprocessing(test_images, save=False, params=self.params)
         else:
@@ -804,6 +817,9 @@ class QCCNN(ABC):
 
     @staticmethod
     def plot_q_train_loss(train_accuracies, train_losses, fig_path=None, fig_name='qccnn_quantum_loss.png'):
+        '''
+        Plots the training accuracy during the optimization of the angles in the quantum convolutional layer.
+        '''
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(6, 9))
 
         ax1.plot(train_accuracies, "-or")
