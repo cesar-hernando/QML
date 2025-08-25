@@ -1,6 +1,6 @@
 # Quantum Machine Learning (QML) in myQLM (Eviden, Atos Group)
 
-This repository is the result of a summer internship in Eviden and contains the implementation of three QML methods: Quantum Support Vector Machine (QSVM), Quantum Circuit Born Machine (QCBM) and Quantum-Classical Convolutional Neural Network (QCCNN). The code of these methods is in the myqlm.py file. Additionally, it includes an implementation of Bayesian Optimization (BO) applied to hyperparameter tuning for the quantum-inspired Simulated Quantum Annealing (SQA) algorithm, designed to solve Binary Combinatorial Optimization problems.
+This repository is the result of a summer internship at Eviden in 2025 and contains the implementation of three QML methods: Quantum Support Vector Machine (QSVM), Quantum Circuit Born Machine (QCBM) and Quantum-Classical Convolutional Neural Network (QCCNN). The code of these methods is in the myqlm.py file. Additionally, it includes an implementation of Bayesian Optimization (BO) applied to hyperparameter tuning for the quantum-inspired Simulated Quantum Annealing (SQA) algorithm, designed to solve Binary Combinatorial Optimization problems.
 
 - QSVM: A quantum-enhanced supervised learning method for binary classification problems, which implements a quantum circuit kernel, as part of the SVM routine. For more information of the algorithm, read through the example_qsvm.ipynb tutorial.
 
